@@ -4263,7 +4263,7 @@ func handleVersion(s *rpcServer, cmd interface{}, closeNotifier <-chan bool) (in
 const (
 	// maxTemplateCacheSize is the maximum number of block templates to cache.
 	// Each entry stores the transactions for a block template, keyed by merkle path hash.
-	maxTemplateCacheSize = 100
+	maxTemplateCacheSize = 1000
 )
 
 // merklePathCache stores transactions keyed by merkle path hash for

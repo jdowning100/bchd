@@ -287,17 +287,27 @@ func createCoinbaseTx(params *chaincfg.Params, coinbaseScript []byte, nextBlockH
 		Value:    blockchain.CalcBlockSubsidy(nextBlockHeight, params),
 		PkScript: pkScript,
 	})
-	padCoinbaseScript(tx)
+	padCoinbaseScript(tx, params, nextBlockHeight)
 
 	return bchutil.NewTx(tx), nil
 }
 
 // padCoinbase makes sure the coinbase script is above the minimum tx size
-// threshold.
-func padCoinbaseScript(tx *wire.MsgTx) {
-	if tx.SerializeSize() < blockchain.MinTransactionSize {
+// threshold based on which fork is active.
+func padCoinbaseScript(tx *wire.MsgTx, params *chaincfg.Params, nextBlockHeight int32) {
+	// Determine which fork is active to use the correct minimum transaction size
+	magneticAnomalyActive := nextBlockHeight > params.MagneticAnonomalyForkHeight
+	upgrade9Active := nextBlockHeight > params.Upgrade9ForkHeight
+
+	minTxSize := blockchain.MinTransactionSize
+	if magneticAnomalyActive && !upgrade9Active {
+		// Magnetic Anomaly requires 100 bytes minimum
+		minTxSize = blockchain.MagneticAnomalyMinTransactionSize
+	}
+
+	if tx.SerializeSize() < minTxSize {
 		tx.TxIn[0].SignatureScript = append(tx.TxIn[0].SignatureScript,
-			make([]byte, blockchain.MinTransactionSize-tx.SerializeSize())...)
+			make([]byte, minTxSize-tx.SerializeSize())...)
 	}
 }
 
@@ -859,7 +869,7 @@ func (g *BlkTmplGenerator) UpdateExtraNonce(msgBlock *wire.MsgBlock, blockHeight
 	msgBlock.Transactions[0].TxIn[0].SignatureScript = coinbaseScript
 
 	// Make sure the coinbase is above the minimum size threshold.
-	padCoinbaseScript((msgBlock.Transactions[0]))
+	padCoinbaseScript(msgBlock.Transactions[0], g.chainParams, blockHeight)
 
 	// TODO(davec): A bchutil.Block should use saved in the state to avoid
 	// recalculating all of the other transaction hashes.
