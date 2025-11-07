@@ -1296,6 +1296,12 @@ func (b *BlockChain) CheckConnectBlockTemplate(block *bchutil.Block) error {
 		flags |= BFMagneticAnomaly
 	}
 
+	// If Upgrade9 is active make sure the block sanity is checked using the
+	// new rule set.
+	if block.Height() > b.chainParams.Upgrade9ForkHeight {
+		flags |= BFUpgrade9
+	}
+
 	err := checkBlockSanity(block, b.chainParams.PowLimit, b.timeSource, flags)
 	if err != nil {
 		return err

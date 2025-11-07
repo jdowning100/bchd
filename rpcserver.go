@@ -46,6 +46,7 @@ import (
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
 	"github.com/gcash/bchutil/merkleblock"
+	lru "github.com/hashicorp/golang-lru/v2"
 )
 
 // API version constants
@@ -129,57 +130,59 @@ type commandHandler func(*rpcServer, interface{}, <-chan bool) (interface{}, err
 // a dependency loop.
 var rpcHandlers map[string]commandHandler
 var rpcHandlersBeforeInit = map[string]commandHandler{
-	"addnode":               handleAddNode,
-	"createrawtransaction":  handleCreateRawTransaction,
-	"debuglevel":            handleDebugLevel,
-	"decoderawtransaction":  handleDecodeRawTransaction,
-	"decodescript":          handleDecodeScript,
-	"estimatefee":           handleEstimateFee,
-	"generate":              handleGenerate,
-	"getaddednodeinfo":      handleGetAddedNodeInfo,
-	"getbestblock":          handleGetBestBlock,
-	"getbestblockhash":      handleGetBestBlockHash,
-	"getblock":              handleGetBlock,
-	"getblockchaininfo":     handleGetBlockChainInfo,
-	"getblockcount":         handleGetBlockCount,
-	"getblockhash":          handleGetBlockHash,
-	"getblockheader":        handleGetBlockHeader,
-	"getblocktemplate":      handleGetBlockTemplate,
-	"getcfilter":            handleGetCFilter,
-	"getcfilterheader":      handleGetCFilterHeader,
-	"getconnectioncount":    handleGetConnectionCount,
-	"getcurrentnet":         handleGetCurrentNet,
-	"getdifficulty":         handleGetDifficulty,
-	"getgenerate":           handleGetGenerate,
-	"gethashespersec":       handleGetHashesPerSec,
-	"getheaders":            handleGetHeaders,
-	"getinfo":               handleGetInfo,
-	"getmempoolinfo":        handleGetMempoolInfo,
-	"getmininginfo":         handleGetMiningInfo,
-	"getnettotals":          handleGetNetTotals,
-	"getnetworkhashps":      handleGetNetworkHashPS,
-	"getnetworkinfo":        handleGetNetworkInfo,
-	"getpeerinfo":           handleGetPeerInfo,
-	"getrawmempool":         handleGetRawMempool,
-	"getrawtransaction":     handleGetRawTransaction,
-	"gettxout":              handleGetTxOut,
-	"gettxoutproof":         handleGetTxOutProof,
-	"help":                  handleHelp,
-	"invalidateblock":       handleInvalidateBlock,
-	"node":                  handleNode,
-	"ping":                  handlePing,
-	"reconsiderblock":       handleReconsiderBlock,
-	"searchrawtransactions": handleSearchRawTransactions,
-	"sendrawtransaction":    handleSendRawTransaction,
-	"setgenerate":           handleSetGenerate,
-	"stop":                  handleStop,
-	"submitblock":           handleSubmitBlock,
-	"uptime":                handleUptime,
-	"validateaddress":       handleValidateAddress,
-	"verifychain":           handleVerifyChain,
-	"verifymessage":         handleVerifyMessage,
-	"verifytxoutproof":      handleVerifyTxOutProof,
-	"version":               handleVersion,
+	"addnode":                  handleAddNode,
+	"createrawtransaction":     handleCreateRawTransaction,
+	"debuglevel":               handleDebugLevel,
+	"decoderawtransaction":     handleDecodeRawTransaction,
+	"decodescript":             handleDecodeScript,
+	"estimatefee":              handleEstimateFee,
+	"generate":                 handleGenerate,
+	"getaddednodeinfo":         handleGetAddedNodeInfo,
+	"getbestblock":             handleGetBestBlock,
+	"getbestblockhash":         handleGetBestBlockHash,
+	"getblock":                 handleGetBlock,
+	"getblockchaininfo":        handleGetBlockChainInfo,
+	"getblockcount":            handleGetBlockCount,
+	"getblockhash":             handleGetBlockHash,
+	"getblockheader":           handleGetBlockHeader,
+	"getblocktemplate":         handleGetBlockTemplate,
+	"getshortblocktemplate":    handleGetShortBlockTemplate,
+	"getcfilter":               handleGetCFilter,
+	"getcfilterheader":         handleGetCFilterHeader,
+	"getconnectioncount":       handleGetConnectionCount,
+	"getcurrentnet":            handleGetCurrentNet,
+	"getdifficulty":            handleGetDifficulty,
+	"getgenerate":              handleGetGenerate,
+	"gethashespersec":          handleGetHashesPerSec,
+	"getheaders":               handleGetHeaders,
+	"getinfo":                  handleGetInfo,
+	"getmempoolinfo":           handleGetMempoolInfo,
+	"getmininginfo":            handleGetMiningInfo,
+	"getnettotals":             handleGetNetTotals,
+	"getnetworkhashps":         handleGetNetworkHashPS,
+	"getnetworkinfo":           handleGetNetworkInfo,
+	"getpeerinfo":              handleGetPeerInfo,
+	"getrawmempool":            handleGetRawMempool,
+	"getrawtransaction":        handleGetRawTransaction,
+	"gettxout":                 handleGetTxOut,
+	"gettxoutproof":            handleGetTxOutProof,
+	"help":                     handleHelp,
+	"invalidateblock":          handleInvalidateBlock,
+	"node":                     handleNode,
+	"ping":                     handlePing,
+	"reconsiderblock":          handleReconsiderBlock,
+	"searchrawtransactions":    handleSearchRawTransactions,
+	"sendrawtransaction":       handleSendRawTransaction,
+	"setgenerate":              handleSetGenerate,
+	"stop":                     handleStop,
+	"submitblock":              handleSubmitBlock,
+	"submitshortblocktemplate": handleSubmitShortBlockTemplate,
+	"uptime":                   handleUptime,
+	"validateaddress":          handleValidateAddress,
+	"verifychain":              handleVerifyChain,
+	"verifymessage":            handleVerifyMessage,
+	"verifytxoutproof":         handleVerifyTxOutProof,
+	"version":                  handleVersion,
 }
 
 // list of commands that we recognize, but for which bchd has no support because
@@ -255,36 +258,37 @@ var rpcLimited = map[string]struct{}{
 	"help": {},
 
 	// HTTP/S-only commands
-	"createrawtransaction":  {},
-	"decoderawtransaction":  {},
-	"decodescript":          {},
-	"estimatefee":           {},
-	"getbestblock":          {},
-	"getbestblockhash":      {},
-	"getblock":              {},
-	"getblockcount":         {},
-	"getblockhash":          {},
-	"getblockheader":        {},
-	"getcfilter":            {},
-	"getcfilterheader":      {},
-	"getcurrentnet":         {},
-	"getdifficulty":         {},
-	"getheaders":            {},
-	"getinfo":               {},
-	"getnettotals":          {},
-	"getnetworkhashps":      {},
-	"getrawmempool":         {},
-	"getrawtransaction":     {},
-	"gettxout":              {},
-	"gettxoutproof":         {},
-	"searchrawtransactions": {},
-	"sendrawtransaction":    {},
-	"submitblock":           {},
-	"uptime":                {},
-	"validateaddress":       {},
-	"verifymessage":         {},
-	"verifytxoutproof":      {},
-	"version":               {},
+	"createrawtransaction":     {},
+	"decoderawtransaction":     {},
+	"decodescript":             {},
+	"estimatefee":              {},
+	"getbestblock":             {},
+	"getbestblockhash":         {},
+	"getblock":                 {},
+	"getblockcount":            {},
+	"getblockhash":             {},
+	"getblockheader":           {},
+	"getcfilter":               {},
+	"getcfilterheader":         {},
+	"getcurrentnet":            {},
+	"getdifficulty":            {},
+	"getheaders":               {},
+	"getinfo":                  {},
+	"getnettotals":             {},
+	"getnetworkhashps":         {},
+	"getrawmempool":            {},
+	"getrawtransaction":        {},
+	"gettxout":                 {},
+	"gettxoutproof":            {},
+	"searchrawtransactions":    {},
+	"sendrawtransaction":       {},
+	"submitblock":              {},
+	"submitshortblocktemplate": {},
+	"uptime":                   {},
+	"validateaddress":          {},
+	"verifymessage":            {},
+	"verifytxoutproof":         {},
+	"version":                  {},
 }
 
 // builderScript is a convenience function which is used for hard-coded scripts
@@ -2191,6 +2195,71 @@ func handleGetBlockTemplateProposal(s *rpcServer, request *btcjson.TemplateReque
 	return nil, nil
 }
 
+// computeMerklePathHash computes a unique hash for a merkle path by
+// concatenating and hashing all the branch hashes.
+func computeMerklePathHash(branches []string) chainhash.Hash {
+	var data []byte
+	for _, branchHex := range branches {
+		branchBytes, _ := hex.DecodeString(branchHex)
+		data = append(data, branchBytes...)
+	}
+	return chainhash.HashH(data)
+}
+
+// extractMerkleBranch extracts the merkle branch for the coinbase (index 0)
+// from a complete merkle tree. This uses the same approach as the subsidy-pool
+// implementation for consistency.
+func extractMerkleBranch(merkleTree []*chainhash.Hash, txCount int) []string {
+	if len(merkleTree) == 0 || txCount == 0 {
+		return nil
+	}
+
+	var branch []string
+
+	// blockchain.BuildMerkleTreeStore lays out the tree level-by-level using a
+	// power-of-two leaf width. Determine that width so we can walk the levels.
+	width := 1
+	for width < txCount {
+		width <<= 1
+	}
+
+	index := 0
+	levelOffset := 0
+	levelWidth := width
+
+	for levelWidth > 1 {
+		siblingIndex := index ^ 1
+		siblingPos := levelOffset + siblingIndex
+		if siblingIndex >= levelWidth || siblingPos >= len(merkleTree) || merkleTree[siblingPos] == nil {
+			siblingPos = levelOffset + index
+		}
+		branch = append(branch, hex.EncodeToString(merkleTree[siblingPos][:]))
+
+		levelOffset += levelWidth
+		index >>= 1
+		levelWidth >>= 1
+	}
+
+	return branch
+}
+
+// buildMerkleBranches builds the merkle branch hashes needed to compute the
+// merkle root from the coinbase transaction at index 0. This returns the
+// sibling hashes at each level of the tree that are needed along with the
+// coinbase hash to compute the merkle root.
+// This uses bchd's BuildMerkleTreeStore and then extracts the branch.
+func buildMerkleBranches(transactions []*bchutil.Tx) []string {
+	if len(transactions) == 0 {
+		return []string{}
+	}
+
+	// Build the complete merkle tree using bchd's optimized implementation
+	merkleTree := blockchain.BuildMerkleTreeStore(transactions)
+
+	// Extract the merkle branch for the coinbase (index 0)
+	return extractMerkleBranch(merkleTree, len(transactions))
+}
+
 // handleGetBlockTemplate implements the getblocktemplate command.
 //
 // See https://en.bitcoin.it/wiki/BIP_0022 and
@@ -3848,6 +3917,187 @@ func handleSubmitBlock(s *rpcServer, cmd interface{}, closeNotifier <-chan bool)
 	return nil, nil
 }
 
+// handleGetShortBlockTemplate implements the getshortblocktemplate command.
+// This returns a compact block template suitable for mining pools, containing
+// only the header bytes (with zero merkle root and nonce), coinbase value, and
+// merkle branches needed to compute the merkle root from the coinbase tx.
+func handleGetShortBlockTemplate(s *rpcServer, cmd interface{}, closeChan <-chan bool) (interface{}, error) {
+
+	// Protect concurrent access when updating block templates.
+	state := s.gbtWorkState
+	state.Lock()
+	defer state.Unlock()
+
+	// Get and generate a block template. We use coinbase value mode.
+	// The template will include segwit transactions automatically.
+	if err := state.updateBlockTemplate(s, true); err != nil {
+		return nil, err
+	}
+
+	// Get the block template
+	template := state.template
+	if template == nil {
+		return nil, &btcjson.RPCError{
+			Code:    btcjson.ErrRPCInternal.Code,
+			Message: "Failed to generate block template",
+		}
+	}
+
+	msgBlock := template.Block
+	if msgBlock == nil {
+		return nil, &btcjson.RPCError{
+			Code:    btcjson.ErrRPCInternal.Code,
+			Message: "Block template has no block",
+		}
+	}
+
+	// Calculate the total coinbase value (subsidy + fees)
+	// The coinbase transaction is always the first transaction in the block
+	// and its output contains the total value (subsidy + fees)
+	coinbaseValue := int64(0)
+	if len(msgBlock.Transactions) > 0 && len(msgBlock.Transactions[0].TxOut) > 0 {
+		coinbaseValue = msgBlock.Transactions[0].TxOut[0].Value
+	}
+
+	// Create a copy of the block header with merkle root set to zeros and nonce set to 0
+	header := msgBlock.Header
+	header.MerkleRoot = chainhash.Hash{} // Zero hash
+	header.Nonce = 0
+
+	// Serialize the header to bytes
+	var headerBuf bytes.Buffer
+	err := header.Serialize(&headerBuf)
+	if err != nil {
+		return nil, &btcjson.RPCError{
+			Code:    btcjson.ErrRPCInternal.Code,
+			Message: fmt.Sprintf("Failed to serialize header: %v", err),
+		}
+	}
+
+	// Build merkle branches from the transactions
+	// Convert []*wire.MsgTx to []*bchutil.Tx
+	transactions := make([]*bchutil.Tx, len(msgBlock.Transactions))
+	for i, msgTx := range msgBlock.Transactions {
+		transactions[i] = bchutil.NewTx(msgTx)
+	}
+
+	merkleBranches := buildMerkleBranches(transactions)
+
+	// Compute merkle path hash and cache the transactions (excluding coinbase)
+	// so they can be reconstructed later in submitshortblocktemplate
+	merklePathHash := computeMerklePathHash(merkleBranches)
+
+	// Store transactions excluding the coinbase (index 0)
+	// The coinbase will be provided by the miner in submitshortblocktemplate
+	txsToCache := msgBlock.Transactions[1:] // Skip coinbase at index 0
+	s.merkleCache.store(merklePathHash, txsToCache)
+
+	// Create and return the result
+	result := &btcjson.GetShortBlockTemplateResult{
+		HeaderBytes:   hex.EncodeToString(headerBuf.Bytes()),
+		CoinbaseValue: coinbaseValue,
+		Height:        int64(template.Height),
+		MerklePath:    merkleBranches,
+	}
+
+	return result, nil
+}
+
+// handleSubmitShortBlockTemplate implements the submitshortblocktemplate command.
+// This reconstructs a full block from the compact template format (header, coinbase,
+// and merkle path) and submits it to the network.
+func handleSubmitShortBlockTemplate(s *rpcServer, cmd interface{}, closeChan <-chan bool) (interface{}, error) {
+	c := cmd.(*btcjson.SubmitShortBlockTemplateCmd)
+
+	// Decode the header hex
+	headerBytes, err := hex.DecodeString(c.HeaderHex)
+	if err != nil {
+		return nil, &btcjson.RPCError{
+			Code:    btcjson.ErrRPCDeserialization,
+			Message: "Failed to decode header hex: " + err.Error(),
+		}
+	}
+
+	// Deserialize the block header
+	var header wire.BlockHeader
+	err = header.Deserialize(bytes.NewReader(headerBytes))
+	if err != nil {
+		return nil, &btcjson.RPCError{
+			Code:    btcjson.ErrRPCDeserialization,
+			Message: "Failed to deserialize header: " + err.Error(),
+		}
+	}
+
+	// Decode the coinbase transaction hex
+	coinbaseBytes, err := hex.DecodeString(c.CoinbaseHex)
+	if err != nil {
+		return nil, &btcjson.RPCError{
+			Code:    btcjson.ErrRPCDeserialization,
+			Message: "Failed to decode coinbase hex: " + err.Error(),
+		}
+	}
+
+	// Deserialize the coinbase transaction
+	var coinbaseTx wire.MsgTx
+	err = coinbaseTx.Deserialize(bytes.NewReader(coinbaseBytes))
+	if err != nil {
+		return nil, &btcjson.RPCError{
+			Code:    btcjson.ErrRPCDeserialization,
+			Message: "Failed to deserialize coinbase transaction: " + err.Error(),
+		}
+	}
+
+	// Compute the merkle path hash to look up cached transactions
+	merklePathHash := computeMerklePathHash(c.MerklePath)
+
+	// Retrieve the cached transactions
+	cachedTxs, ok := s.merkleCache.get(merklePathHash)
+	if !ok {
+		return nil, &btcjson.RPCError{
+			Code:    btcjson.ErrRPCInvalidParameter,
+			Message: "Merkle path not found in cache. Block template may have expired.",
+		}
+	}
+
+	// Construct the full block
+	// The header already contains the correct merkle root (computed by the miner)
+	// Start with the coinbase transaction, then add cached transactions
+	block := wire.NewMsgBlock(&header)
+	block.AddTransaction(&coinbaseTx)
+	for _, tx := range cachedTxs {
+		block.AddTransaction(tx)
+	}
+
+	// Validate that the merkle root in the header matches the computed merkle root
+	transactions := make([]*bchutil.Tx, len(block.Transactions))
+	for i, tx := range block.Transactions {
+		transactions[i] = bchutil.NewTx(tx)
+	}
+	merkles := blockchain.BuildMerkleTreeStore(transactions)
+	computedMerkleRoot := merkles[len(merkles)-1]
+
+	if !header.MerkleRoot.IsEqual(computedMerkleRoot) {
+		return nil, &btcjson.RPCError{
+			Code: btcjson.ErrRPCVerify,
+			Message: fmt.Sprintf("Block merkle root mismatch. Expected %s, got %s",
+				computedMerkleRoot.String(), header.MerkleRoot.String()),
+		}
+	}
+
+	// Convert to bchutil.Block for submission
+	bchBlock := bchutil.NewBlock(block)
+
+	// Process this block using the same rules as blocks coming from other
+	// nodes. This will in turn relay it to the network like normal.
+	_, err = s.cfg.SyncMgr.SubmitBlock(bchBlock, blockchain.BFNone)
+	if err != nil {
+		return fmt.Sprintf("rejected: %s", err.Error()), nil
+	}
+
+	rpcsLog.Infof("Accepted block %s via submitshortblocktemplate", bchBlock.Hash())
+	return nil, nil
+}
+
 // handleUptime implements the uptime command.
 func handleUptime(s *rpcServer, cmd interface{}, closeNotifier <-chan bool) (interface{}, error) {
 	return time.Now().Unix() - s.cfg.StartupTime, nil
@@ -4010,6 +4260,43 @@ func handleVersion(s *rpcServer, cmd interface{}, closeNotifier <-chan bool) (in
 }
 
 // rpcServer provides a concurrent safe RPC server to a chain server.
+const (
+	// maxTemplateCacheSize is the maximum number of block templates to cache.
+	// Each entry stores the transactions for a block template, keyed by merkle path hash.
+	maxTemplateCacheSize = 100
+)
+
+// merklePathCache stores transactions keyed by merkle path hash for
+// submitshortblocktemplate to reconstruct blocks. Uses an LRU cache with
+// a maximum size to prevent unbounded memory growth.
+type merklePathCache struct {
+	cache *lru.Cache[chainhash.Hash, []*wire.MsgTx]
+}
+
+// newMerklePathCache creates a new merkle path cache with LRU eviction.
+func newMerklePathCache() *merklePathCache {
+	cache, err := lru.New[chainhash.Hash, []*wire.MsgTx](maxTemplateCacheSize)
+	if err != nil {
+		// This should never happen as we're using a valid size
+		panic(fmt.Sprintf("Failed to create merkle path cache: %v", err))
+	}
+	return &merklePathCache{
+		cache: cache,
+	}
+}
+
+// store adds transactions to the cache keyed by merkle path hash.
+// If the cache is full, the least recently used entry is evicted.
+func (mpc *merklePathCache) store(hash chainhash.Hash, txs []*wire.MsgTx) {
+	mpc.cache.Add(hash, txs)
+}
+
+// get retrieves transactions from the cache by merkle path hash.
+// Returns the transactions and true if found, or nil and false if not found.
+func (mpc *merklePathCache) get(hash chainhash.Hash) ([]*wire.MsgTx, bool) {
+	return mpc.cache.Get(hash)
+}
+
 type rpcServer struct {
 	started                int32
 	shutdown               int32
@@ -4025,6 +4312,7 @@ type rpcServer struct {
 	helpCacher             *helpCacher
 	requestProcessShutdown chan struct{}
 	quit                   chan int
+	merkleCache            *merklePathCache
 }
 
 // Stop is used by server.go to stop the rpc listener.
@@ -4753,6 +5041,7 @@ func newRPCServer(config *rpcserverConfig) (*rpcServer, error) {
 		helpCacher:             newHelpCacher(),
 		requestProcessShutdown: make(chan struct{}),
 		quit:                   make(chan int),
+		merkleCache:            newMerklePathCache(),
 	}
 	if cfg.RPCUser != "" && cfg.RPCPass != "" {
 		login := cfg.RPCUser + ":" + cfg.RPCPass
